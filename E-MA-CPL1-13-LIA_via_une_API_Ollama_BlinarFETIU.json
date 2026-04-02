@@ -1,0 +1,236 @@
+{
+  "name": "E-MA-CPL1-13-L’IA via une API (Ollama)_BlinarFETIU",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -176,
+        -48
+      ],
+      "id": "5ec54d00-4fd5-4600-b200-6bbd7896fbdf",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.microsoftOutlook",
+      "typeVersion": 2,
+      "position": [
+        32,
+        -48
+      ],
+      "id": "a4bb9cdc-53e8-4a5b-807a-2e4f771060f7",
+      "name": "Récupère les messages Outlook",
+      "webhookId": "68671009-99ca-4e73-a49d-e0e6f52dff78",
+      "credentials": {
+        "microsoftOutlookOAuth2Api": {
+          "id": "sGU27deXUXRwld4i",
+          "name": "Microsoft Outlook account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.map(item => {\n const j = item.json;\n const messageId = j.id || '';\n const conversationId = j.conversationId || '';\n const sender = j.from || '';\n const subject = j.subject || '';\n const bodyText = j.bodyPreview || '';\n const recipients = Array.isArray(j.to) ? j.to.join(', ') : '';\n const hasAttachments = j.hasAttachments ?? false;\n const textForEmbedding =\n `search_document: Objet: ${subject}\\n` +\n `Expéditeur: ${sender}\\n` +\n `Destinataire(s): ${recipients}\\n` +\n `Message:\\n${bodyText}`;\n return {\n json: {\n message_id: messageId,\n conversation_id: conversationId,\n mailbox: 'etudiant@cpnv.me',\n sender,\n subject,\n body_text: bodyText,\n recipients,\n has_attachments: hasAttachments,\n text_for_embedding: textForEmbedding\n }\n };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        -48
+      ],
+      "id": "65148835-3828-40ca-a4c9-7d2733df3ac0",
+      "name": "Crée un texte Condensé du mail"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://gpu.cpnv.me:11434/api/embeddings",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "nomic-embed-text-v2-moe"
+            },
+            {
+              "name": "prompt",
+              "value": "={{$json.text_for_embedding}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        512,
+        -224
+      ],
+      "id": "d1f157a9-9b68-4736-b306-ee013c1aa9e0",
+      "name": "Calcul de l'embedding"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        512,
+        80
+      ],
+      "id": "66d8b7cf-5a1e-47df-80f7-e55cf91de0c8",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.map(item => {\n const j = item.json;\n const record = {\n message_id: j.message_id,\n conversation_id: j.conversation_id,\n mailbox: j.mailbox,\n sender: j.sender,\n recipients: j.recipients,\n subject: j.subject,\n body_text: j.body_text,\n has_attachments: j.has_attachments,\n text_for_embedding: j.text_for_embedding,\n embedding_model: j.model,\n embedding: Array.isArray(j.embedding) ? j.embedding[0] : [],\n created_at: new Date().toISOString()\n };\n return {\n json: {\n line: JSON.stringify(record)\n }\n };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        80
+      ],
+      "id": "cd566895-9d35-4ef4-8e89-f3f01905f74a",
+      "name": "Transforme les données"
+    },
+    {
+      "parameters": {
+        "operation": "toJson",
+        "binaryPropertyName": "=data",
+        "options": {
+          "fileName": "embeddingsBlinarFETIU.json"
+        }
+      },
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        912,
+        80
+      ],
+      "id": "4a5ce214-9b3a-4425-a08d-6172b81ddd5b",
+      "name": "Converti en fichier"
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "/data/embeddingsBlinarFETIU.json",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        1120,
+        80
+      ],
+      "id": "e27f3c76-74e6-41c3-ad87-bc8fb24b344b",
+      "name": "Read/Write Files from Disk"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Récupère les messages Outlook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Récupère les messages Outlook": {
+      "main": [
+        [
+          {
+            "node": "Crée un texte Condensé du mail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Crée un texte Condensé du mail": {
+      "main": [
+        [
+          {
+            "node": "Calcul de l'embedding",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Transforme les données",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transforme les données": {
+      "main": [
+        [
+          {
+            "node": "Converti en fichier",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Converti en fichier": {
+      "main": [
+        [
+          {
+            "node": "Read/Write Files from Disk",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calcul de l'embedding": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "2d20127f-c4d1-4a18-abd9-7535c42a0aeb",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "9d30d1f1874df20c0dc0c5e334ba45c46152a3794403b022f504026a467e081f"
+  },
+  "id": "FNMdzrCA4rShFHwa7AHis",
+  "tags": []
+}

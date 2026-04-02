@@ -1,0 +1,222 @@
+{
+  "name": "E-MA-CPL1-14-n8nOutlookCred_BlinarFETIU",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "filters": {},
+        "options": {}
+      },
+      "type": "n8n-nodes-base.microsoftOutlookTrigger",
+      "typeVersion": 1,
+      "position": [
+        -128,
+        -16
+      ],
+      "id": "b187ba4e-2d56-4d73-aa50-1a971469f14c",
+      "name": "Microsoft Outlook Trigger",
+      "credentials": {
+        "microsoftOutlookOAuth2Api": {
+          "id": "sGU27deXUXRwld4i",
+          "name": "Microsoft Outlook account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.map(item => {\n const subject = item.json.subject || \"\";\n const body = item.json.body || \"\";\n return {\n json: {\n ...item.json,\n text_for_embedding: `search_query: Objet:\n${subject}\\nMessage:\\n${body}`\n }\n };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        80,
+        -16
+      ],
+      "id": "92f12fd1-36ff-4566-a004-49e24a27cebc",
+      "name": "text_for_embedding"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        304,
+        64
+      ],
+      "id": "190695aa-9abf-478b-87d0-eb4440fc5f9c",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://gpu.cpnv.me:11434/api/embeddings",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "nomic-embed-text-v2-moe"
+            },
+            {
+              "name": "prompt",
+              "value": "={{$json.text_for_embedding}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        320,
+        -224
+      ],
+      "id": "58682d03-9751-41aa-8402-6fbb3583adaa",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "fileSelector": "/data/embeddingsBlinarFETIU.json",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        528,
+        -80
+      ],
+      "id": "ad0c6859-e320-496e-a1e2-1e5b3083e7d9",
+      "name": "Read/Write Files from Disk"
+    },
+    {
+      "parameters": {
+        "operation": "fromJson",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        720,
+        -80
+      ],
+      "id": "c395e157-b041-41c8-81e4-420598c7af97",
+      "name": "Extract from File"
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $input.all();\n \nlet emails = [];\n \nraw.forEach(item => {\n  const dataArray = item.json.data || [];\n \n  dataArray.forEach(d => {\n    if (d.line) {\n      try {\n        const parsed = JSON.parse(d.line);\n \n        emails.push({\n          subject: parsed.subject || \"\",\n          body_text: parsed.body_text || \"\"\n        });\n \n      } catch (e) {}\n    }\n  });\n});\n \nif (emails.length < 2) {\n  return [\n    {\n      json: {\n        message: \"Pas assez d'emails pour calculer une similarité\",\n        count: emails.length\n      }\n    }\n  ];\n}\n \nfunction tokenize(text) {\n  if (!text) return [];\n \n  return text\n    .toLowerCase()\n    .replace(/[^\\w\\s]/g, \"\")\n    .split(/\\s+/)\n    .filter(Boolean);\n}\n \nfunction buildVocabulary(docs) {\n  const vocab = new Set();\n \n  docs.forEach(doc => {\n    tokenize(doc).forEach(word => vocab.add(word));\n  });\n \n  return Array.from(vocab);\n}\n \nfunction textToVector(text, vocab) {\n  const words = tokenize(text);\n \n  const freq = {};\n  words.forEach(w => {\n    freq[w] = (freq[w] || 0) + 1;\n  });\n \n  return vocab.map(word => freq[word] || 0);\n}\n \nfunction dot(a, b) {\n  return a.reduce((sum, v, i) => sum + v * b[i], 0);\n}\n \nfunction magnitude(v) {\n  return Math.sqrt(v.reduce((s, x) => s + x * x, 0));\n}\n \nfunction cosine(a, b) {\n  const denom = magnitude(a) * magnitude(b);\n  if (!denom) return 0;\n  return dot(a, b) / denom;\n}\n \nconst vocab = buildVocabulary(emails.map(e => e.body_text));\n \nconst vectors = emails.map(e => textToVector(e.body_text, vocab));\n \nconst avgVector = [];\n \nfor (let i = 0; i < vocab.length; i++) {\n  let sum = 0;\n \n  for (let j = 0; j < vectors.length; j++) {\n    sum += vectors[j][i];\n  }\n \n  avgVector.push(sum / vectors.length);\n}\n \nconst results = emails.map((email, i) => {\n  const vec = vectors[i];\n  const similarity = cosine(vec, avgVector);\n \n  return {\n    json: {\n      subject: email.subject,\n      body_text: email.body_text,\n      similarity: Number(similarity.toFixed(2))\n    }\n  };\n});\n \nresults.sort((a, b) => b.json.similarity - a.json.similarity);\n \nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        864,
+        144
+      ],
+      "id": "d49c3e04-8db3-4928-81b8-f62763c168e8",
+      "name": "Code in JavaScript",
+      "alwaysOutputData": false
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Microsoft Outlook Trigger": {
+      "main": [
+        [
+          {
+            "node": "text_for_embedding",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "text_for_embedding": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Read/Write Files from Disk",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read/Write Files from Disk": {
+      "main": [
+        [
+          {
+            "node": "Extract from File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract from File": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "8ff84923-b855-4f00-bcfb-f936410ba962",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "9d30d1f1874df20c0dc0c5e334ba45c46152a3794403b022f504026a467e081f"
+  },
+  "id": "nHwdruY_b-hoisj99CC-J",
+  "tags": []
+}
